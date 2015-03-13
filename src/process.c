@@ -1,21 +1,21 @@
 /*
-    process.c -- process management functions
-    Copyright (C) 1999-2005 Ivo Timmermans,
-                  2000-2015 Guus Sliepen <guus@tinc-vpn.org>
+	process.c -- process management functions
+	Copyright (C) 1999-2005 Ivo Timmermans,
+				  2000-2015 Guus Sliepen <guus@tinc-vpn.org>
 
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License along
-    with this program; if not, write to the Free Software Foundation, Inc.,
-    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+	You should have received a copy of the GNU General Public License along
+	with this program; if not, write to the Free Software Foundation, Inc.,
+	51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
 #include "system.h"
@@ -42,6 +42,7 @@ extern char *identname;
 extern char *pidfilename;
 extern char **g_argv;
 extern bool use_logfile;
+extern bool use_syslog;
 
 #ifndef HAVE_MINGW
 static sigset_t emptysigset;
@@ -97,8 +98,8 @@ bool install_service(void) {
 	}
 
 	service = CreateService(manager, identname, identname,
-	                        SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL,
-	                        command, NULL, NULL, NULL, NULL, NULL);
+							SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL,
+							command, NULL, NULL, NULL, NULL, NULL);
 
 	if(!service) {
 		DWORD lasterror = GetLastError();
@@ -252,7 +253,7 @@ static bool write_pidfile(void) {
 	if(pid) {
 		if(netname)
 			fprintf(stderr, "A tincd is already running for net `%s' with pid %ld.\n",
-			        netname, (long)pid);
+					netname, (long)pid);
 		else {
 			fprintf(stderr, "A tincd is already running with pid %ld.\n", (long)pid);
 		}
@@ -282,7 +283,7 @@ bool kill_other(int signal) {
 	if(!pid) {
 		if(netname)
 			fprintf(stderr, "No other tincd is running for net `%s'.\n",
-			        netname);
+					netname);
 		else {
 			fprintf(stderr, "No other tincd is running.\n");
 		}
@@ -296,7 +297,7 @@ bool kill_other(int signal) {
 	if(kill(pid, signal) && errno == ESRCH) {
 		if(netname)
 			fprintf(stderr, "The tincd for net `%s' is no longer running. ",
-			        netname);
+					netname);
 		else {
 			fprintf(stderr, "The tincd is no longer running. ");
 		}
@@ -315,6 +316,8 @@ bool kill_other(int signal) {
   Detach from current terminal, write pidfile, kill parent
 */
 bool detach(void) {
+	logmode_t logmode;
+
 	setup_signals();
 
 	/* First check if we can open a fresh new pidfile */
@@ -335,7 +338,7 @@ bool detach(void) {
 
 		if(daemon(0, 0)) {
 			fprintf(stderr, "Couldn't detach from terminal: %s",
-			        strerror(errno));
+					strerror(errno));
 			return false;
 		}
 
@@ -355,10 +358,17 @@ bool detach(void) {
 #endif
 	}
 
-	openlogger(identname, use_logfile ? LOGMODE_FILE : (do_detach ? LOGMODE_SYSLOG : LOGMODE_STDERR));
+	if(use_logfile) {
+		logmode = LOGMODE_FILE;
+	} else if(use_syslog || do_detach) {
+		logmode = LOGMODE_SYSLOG;
+	} else {
+		logmode = LOGMODE_STDERR;
+	}
+	openlogger(identname, logmode);
 
 	logger(LOG_NOTICE, "tincd %s starting, debug level %d",
-	       VERSION, debug_level);
+		   VERSION, debug_level);
 
 	return true;
 }
@@ -476,12 +486,12 @@ bool execute_script(const char *name, char **envp) {
 		if(WIFEXITED(status)) { /* Child exited by itself */
 			if(WEXITSTATUS(status)) {
 				logger(LOG_ERR, "Script %s exited with non-zero status %d",
-				       name, WEXITSTATUS(status));
+					   name, WEXITSTATUS(status));
 				return false;
 			}
 		} else if(WIFSIGNALED(status)) {        /* Child was killed by a signal */
 			logger(LOG_ERR, "Script %s was killed by signal %d (%s)",
-			       name, WTERMSIG(status), strsignal(WTERMSIG(status)));
+				   name, WTERMSIG(status), strsignal(WTERMSIG(status)));
 			return false;
 		} else {                        /* Something strange happened */
 			logger(LOG_ERR, "Script %s terminated abnormally", name);
@@ -528,7 +538,7 @@ static RETSIGTYPE sigquit_handler(int a) {
 
 static RETSIGTYPE fatal_signal_square(int a) {
 	logger(LOG_ERR, "Got another fatal signal %d (%s): not restarting.", a,
-	       strsignal(a));
+		   strsignal(a));
 	exit(1);
 }
 
@@ -568,13 +578,13 @@ static RETSIGTYPE sigint_handler(int a) {
 
 	if(saved_debug_level != -1) {
 		logger(LOG_NOTICE, "Reverting to old debug level (%d)",
-		       saved_debug_level);
+			   saved_debug_level);
 		debug_level = saved_debug_level;
 		saved_debug_level = -1;
 	} else {
 		logger(LOG_NOTICE,
-		       "Temporarily setting debug level to 5.  Kill me with SIGINT again to go back to level %d.",
-		       debug_level);
+			   "Temporarily setting debug level to 5.  Kill me with SIGINT again to go back to level %d.",
+			   debug_level);
 		saved_debug_level = debug_level;
 		debug_level = 5;
 	}
@@ -670,8 +680,8 @@ void setup_signals(void) {
 
 		if(sigaction(sighandlers[i].signal, &act, NULL) < 0)
 			fprintf(stderr, "Installing signal handler for signal %d (%s) failed: %s\n",
-			        sighandlers[i].signal, strsignal(sighandlers[i].signal),
-			        strerror(errno));
+					sighandlers[i].signal, strsignal(sighandlers[i].signal),
+					strerror(errno));
 	}
 
 #endif

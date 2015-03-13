@@ -1,25 +1,25 @@
 /*
-    tincd.c -- the main file for tincd
-    Copyright (C) 1998-2005 Ivo Timmermans
-                  2000-2018 Guus Sliepen <guus@tinc-vpn.org>
-                  2008      Max Rijevski <maksuf@gmail.com>
-                  2009      Michael Tokarev <mjt@tls.msk.ru>
-                  2010      Julien Muchembled <jm@jmuchemb.eu>
-                  2010      Timothy Redaelli <timothy@redaelli.eu>
+	tincd.c -- the main file for tincd
+	Copyright (C) 1998-2005 Ivo Timmermans
+				  2000-2018 Guus Sliepen <guus@tinc-vpn.org>
+				  2008      Max Rijevski <maksuf@gmail.com>
+				  2009      Michael Tokarev <mjt@tls.msk.ru>
+				  2010      Julien Muchembled <jm@jmuchemb.eu>
+				  2010      Timothy Redaelli <timothy@redaelli.eu>
 
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    (at your option) any later version.
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License along
-    with this program; if not, write to the Free Software Foundation, Inc.,
-    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+	You should have received a copy of the GNU General Public License along
+	with this program; if not, write to the Free Software Foundation, Inc.,
+	51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
 #include "system.h"
@@ -100,6 +100,9 @@ static const char *switchuser = NULL;
 /* If nonzero, write log entries to a separate file. */
 bool use_logfile = false;
 
+/* If nonzero, use syslog instead of stderr in no-detach mode. */
+bool use_syslog = false;
+
 char *identname = NULL;                         /* program name for syslog */
 char *pidfilename = NULL;                       /* pid file location */
 char *logfilename = NULL;                       /* log file location */
@@ -121,6 +124,7 @@ static struct option const long_options[] = {
 	{"chroot", no_argument, NULL, 'R'},
 	{"user", required_argument, NULL, 'U'},
 	{"logfile", optional_argument, NULL, 4},
+	{"syslog", no_argument, NULL, 's'},
 	{"pidfile", required_argument, NULL, 5},
 	{"option", required_argument, NULL, 'o'},
 	{NULL, 0, NULL, 0}
@@ -135,23 +139,24 @@ int main2(int argc, char **argv);
 static void usage(bool status) {
 	if(status)
 		fprintf(stderr, "Try `%s --help\' for more information.\n",
-		        program_name);
+				program_name);
 	else {
 		printf("Usage: %s [option]...\n\n", program_name);
 		printf("  -c, --config=DIR               Read configuration options from DIR.\n"
-		       "  -D, --no-detach                Don't fork and detach.\n"
-		       "  -d, --debug[=LEVEL]            Increase debug level or set it to LEVEL.\n"
-		       "  -k, --kill[=SIGNAL]            Attempt to kill a running tincd and exit.\n"
-		       "  -n, --net=NETNAME              Connect to net NETNAME.\n"
-		       "  -K, --generate-keys[=BITS]     Generate public/private RSA keypair.\n"
-		       "  -L, --mlock                    Lock tinc into main memory.\n"
-		       "      --logfile[=FILENAME]       Write log entries to a logfile.\n"
-		       "      --pidfile=FILENAME         Write PID to FILENAME.\n"
-		       "  -o, --option=[HOST.]KEY=VALUE  Set global/host configuration value.\n"
-		       "  -R, --chroot                   chroot to NET dir at startup.\n"
-		       "  -U, --user=USER                setuid to given USER at startup.\n"
-		       "      --help                     Display this help and exit.\n"
-		       "      --version                  Output version information and exit.\n\n");
+			   "  -D, --no-detach                Don't fork and detach.\n"
+			   "  -d, --debug[=LEVEL]            Increase debug level or set it to LEVEL.\n"
+			   "  -k, --kill[=SIGNAL]            Attempt to kill a running tincd and exit.\n"
+			   "  -n, --net=NETNAME              Connect to net NETNAME.\n"
+			   "  -K, --generate-keys[=BITS]     Generate public/private RSA keypair.\n"
+			   "  -L, --mlock                    Lock tinc into main memory.\n"
+			   "      --logfile[=FILENAME]       Write log entries to a logfile.\n"
+			   "  -s  --syslog                   Use syslog instead of stderr with --no-detach.\n"
+			   "      --pidfile=FILENAME         Write PID to FILENAME.\n"
+			   "  -o, --option=[HOST.]KEY=VALUE  Set global/host configuration value.\n"
+			   "  -R, --chroot                   chroot to NET dir at startup.\n"
+			   "  -U, --user=USER                setuid to given USER at startup.\n"
+			   "      --help                     Display this help and exit.\n"
+			   "      --version                  Output version information and exit.\n\n");
 		printf("Report bugs to tinc@tinc-vpn.org.\n");
 	}
 }
@@ -164,7 +169,7 @@ static bool parse_options(int argc, char **argv) {
 
 	cmdline_conf = list_alloc((list_action_t)free_config);
 
-	while((r = getopt_long(argc, argv, "c:DLd::k::n:o:K::RU:", long_options, &option_index)) != EOF) {
+	while((r = getopt_long(argc, argv, "c:DLd::k::n:so:K::RU:", long_options, &option_index)) != EOF) {
 		switch(r) {
 		case 0:                         /* long option */
 			break;
@@ -235,7 +240,7 @@ static bool parse_options(int argc, char **argv) {
 
 					if(!kill_tincd) {
 						fprintf(stderr, "Invalid argument `%s'; SIGNAL must be a number or one of HUP, TERM, KILL, USR1, USR2, WINCH, INT or ALRM.\n",
-						        optarg);
+								optarg);
 						usage(true);
 						return false;
 					}
@@ -284,7 +289,7 @@ static bool parse_options(int argc, char **argv) {
 
 				if(generate_keys < 512) {
 					fprintf(stderr, "Invalid argument `%s'; BITS must be a number equal to or greater than 512.\n",
-					        optarg);
+							optarg);
 					usage(true);
 					return false;
 				}
@@ -294,6 +299,10 @@ static bool parse_options(int argc, char **argv) {
 				generate_keys = 2048;
 			}
 
+			break;
+
+		case 's':                               /* syslog */
+			use_syslog = true;
 			break;
 
 		case 'R':                               /* chroot to NETNAME dir */
@@ -599,9 +608,9 @@ static bool drop_privs() {
 		uid = pw->pw_uid;
 
 		if(initgroups(switchuser, pw->pw_gid) != 0 ||
-		                setgid(pw->pw_gid) != 0) {
+						setgid(pw->pw_gid) != 0) {
 			logger(LOG_ERR, "System call `%s' failed: %s",
-			       "initgroups", strerror(errno));
+				   "initgroups", strerror(errno));
 			return false;
 		}
 
@@ -617,7 +626,7 @@ static bool drop_privs() {
 
 		if(chroot(confbase) != 0 || chdir("/") != 0) {
 			logger(LOG_ERR, "System call `%s' failed: %s",
-			       "chroot", strerror(errno));
+				   "chroot", strerror(errno));
 			return false;
 		}
 
@@ -628,7 +637,7 @@ static bool drop_privs() {
 	if(switchuser)
 		if(setuid(uid) != 0) {
 			logger(LOG_ERR, "System call `%s' failed: %s",
-			       "setuid", strerror(errno));
+				   "setuid", strerror(errno));
 			return false;
 		}
 
@@ -646,6 +655,8 @@ static bool drop_privs() {
 #endif
 
 int main(int argc, char **argv) {
+	logmode_t logmode;
+
 	program_name = argv[0];
 
 	if(!parse_options(argc, argv)) {
@@ -655,10 +666,10 @@ int main(int argc, char **argv) {
 	if(show_version) {
 		printf("%s version %s\n", PACKAGE, VERSION);
 		printf("Copyright (C) 1998-2018 Ivo Timmermans, Guus Sliepen and others.\n"
-		       "See the AUTHORS file for a complete list.\n\n"
-		       "tinc comes with ABSOLUTELY NO WARRANTY.  This is free software,\n"
-		       "and you are welcome to redistribute it under certain conditions;\n"
-		       "see the file COPYING for details.\n");
+			   "See the AUTHORS file for a complete list.\n\n"
+			   "tinc comes with ABSOLUTELY NO WARRANTY.  This is free software,\n"
+			   "and you are welcome to redistribute it under certain conditions;\n"
+			   "see the file COPYING for details.\n");
 
 		return 0;
 	}
@@ -674,7 +685,14 @@ int main(int argc, char **argv) {
 		return !kill_other(kill_tincd);
 	}
 
-	openlogger("tinc", use_logfile ? LOGMODE_FILE : LOGMODE_STDERR);
+	if(use_logfile) {
+		logmode = LOGMODE_FILE;
+	} else if(use_syslog) {
+		logmode = LOGMODE_SYSLOG;
+	} else {
+		logmode = LOGMODE_STDERR;
+	}
+	openlogger("tinc", logmode);
 
 	g_argv = argv;
 
@@ -746,7 +764,7 @@ int main2(int argc, char **argv) {
 	 * No need to do that in parent as it's very short-lived. */
 	if(do_mlock && mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
 		logger(LOG_ERR, "System call `%s' failed: %s", "mlockall",
-		       strerror(errno));
+			   strerror(errno));
 		return 1;
 	}
 
@@ -768,19 +786,19 @@ int main2(int argc, char **argv) {
 		if(!strcasecmp(priority, "Normal")) {
 			if(setpriority(NORMAL_PRIORITY_CLASS) != 0) {
 				logger(LOG_ERR, "System call `%s' failed: %s",
-				       "setpriority", strerror(errno));
+					   "setpriority", strerror(errno));
 				goto end;
 			}
 		} else if(!strcasecmp(priority, "Low")) {
 			if(setpriority(BELOW_NORMAL_PRIORITY_CLASS) != 0) {
 				logger(LOG_ERR, "System call `%s' failed: %s",
-				       "setpriority", strerror(errno));
+					   "setpriority", strerror(errno));
 				goto end;
 			}
 		} else if(!strcasecmp(priority, "High")) {
 			if(setpriority(HIGH_PRIORITY_CLASS) != 0) {
 				logger(LOG_ERR, "System call `%s' failed: %s",
-				       "setpriority", strerror(errno));
+					   "setpriority", strerror(errno));
 				goto end;
 			}
 		} else {
